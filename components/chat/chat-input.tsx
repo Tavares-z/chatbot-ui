@@ -81,6 +81,40 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
     }, 200) // FIX: hacky
   }, [selectedPreset, selectedAssistant])
 
+const detectLanguage = (code: string): string => {
+  if (/^\s*<[\w]/.test(code) || /<\/[\w]+>/.test(code)) return "html"
+  if (/import\s+.*\s+from\s+['"]|export\s+(default|const|function|class)/.test(code)) return "typescript"
+  if (/def\s+\w+\s*\(|import\s+\w+|print\s*\(|elif\s+/.test(code)) return "python"
+  if (/SELECT\s+|INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM/i.test(code)) return "sql"
+  if (/^\s*\{[\s\S]*\}$/.test(code.trim()) && /\"[\w]+\"\s*:/.test(code)) return "json"
+  if (/fun\s+\w+|val\s+\w+|var\s+\w+/.test(code) && /\.kt/.test(code)) return "kotlin"
+  if (/#include\s+<|int\s+main\s*\(/.test(code)) return "cpp"
+  if (/^\s*(const|let|var)\s+\w+|function\s+\w+\s*\(|=>\s*\{/.test(code)) return "javascript"
+  if (/\$\w+\s*=|echo\s+|<?php/.test(code)) return "php"
+  return "code"
+}
+
+const looksLikeCode = (text: string): boolean => {
+  const lines = text.split("\n")
+
+  // Precisa ter pelo menos 2 linhas para considerar como código
+  if (lines.length < 2) return false
+
+  const checks = [
+    // Linhas com indentação consistente
+    lines.filter(l => /^(\s{2,}|\t)/.test(l)).length >= 2,
+    // Palavras-chave comuns de código
+    /\b(function|const|let|var|import|export|class|return|if|else|for|while|def|SELECT|INSERT)\b/.test(text),
+    // Símbolos típicos de código
+    /[{};=><!]/.test(text) && /[\(\)]/.test(text),
+    // Múltiplas linhas com padrão de código
+    lines.filter(l => /[{};,]$/.test(l.trim())).length >= 2,
+  ]
+
+  // Se pelo menos 2 checks passarem, é código
+  return checks.filter(Boolean).length >= 2
+}
+
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (!isTyping && event.key === "Enter" && !event.shiftKey) {
       event.preventDefault()
@@ -141,26 +175,37 @@ export const ChatInput: FC<ChatInputProps> = ({}) => {
     }
   }
 
-  const handlePaste = (event: React.ClipboardEvent) => {
-    const imagesAllowed = LLM_LIST.find(
-      llm => llm.modelId === chatSettings?.model
-    )?.imageInput
+const handlePaste = (event: React.ClipboardEvent) => {
+  const imagesAllowed = LLM_LIST.find(
+    llm => llm.modelId === chatSettings?.model
+  )?.imageInput
 
-    const items = event.clipboardData.items
-    for (const item of items) {
-      if (item.type.indexOf("image") === 0) {
-        if (!imagesAllowed) {
-          toast.error(
-            `Images are not supported for this model. Use models like GPT-4 Vision instead.`
-          )
-          return
-        }
-        const file = item.getAsFile()
-        if (!file) return
-        handleSelectDeviceFile(file)
+  const items = event.clipboardData.items
+  for (const item of items) {
+    if (item.type.indexOf("image") === 0) {
+      if (!imagesAllowed) {
+        toast.error(
+          `Images are not supported for this model. Use models like GPT-4 Vision instead.`
+        )
+        return
       }
+      const file = item.getAsFile()
+      if (!file) return
+      handleSelectDeviceFile(file)
+      return
     }
   }
+
+  const pastedText = event.clipboardData.getData("text")
+  if (pastedText && looksLikeCode(pastedText)) {
+    event.preventDefault()
+    const lang = detectLanguage(pastedText)
+    const formatted = `\`\`\`${lang}\n${pastedText}\n\`\`\``
+    handleInputChange({
+      target: { value: userInput ? `${userInput}\n${formatted}` : formatted }
+    } as React.ChangeEvent<HTMLTextAreaElement>)
+  }
+}
 
   return (
     <>
